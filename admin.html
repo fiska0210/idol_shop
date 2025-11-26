@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>商店後台管理</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getFirestore, collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCNWQsi4aEcBvegrz96XqtzTJ_1p992i7A",
+            authDomain: "kabushikigaisha.firebaseapp.com",
+            projectId: "kabushikigaisha",
+            storageBucket: "kabushikigaisha.firebasestorage.app",
+            messagingSenderId: "1020713787146",
+            appId: "1:1020713787146:web:87c1800c0eb1e730dce4f3",
+            measurementId: "G-BZZNNJK117"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        window.auth = getAuth(app);
+        window.db = getFirestore(app);
+        window.firebaseMethods = { signInWithEmailAndPassword, onAuthStateChanged, signOut, collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, orderBy };
+    </script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+<div id="adminApp" class="container mx-auto p-4 max-w-4xl">
+    
+    <!-- 1. 登入畫面 -->
+    <div v-if="!user" class="max-w-md mx-auto bg-white p-8 rounded shadow mt-20">
+        <h2 class="text-2xl font-bold mb-4 text-center">後台登入</h2>
+        <input v-model="loginData.email" type="email" placeholder="Email" class="w-full border p-2 mb-3 rounded">
+        <input v-model="loginData.password" type="password" placeholder="Password" class="w-full border p-2 mb-4 rounded">
+        <button @click="login" class="w-full bg-blue-600 text-white py-2 rounded font-bold">登入</button>
+    </div>
+
+    <!-- 2. 管理介面 -->
+    <div v-else>
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-2xl font-bold">🔧 商店後台</h1>
+            <button @click="logout" class="text-red-500 underline">登出</button>
+        </div>
+
+        <!-- 頁籤切換 -->
+        <div class="flex space-x-4 mb-6">
+            <button @click="currentTab = 'products'" :class="currentTab === 'products' ? 'bg-blue-600 text-white' : 'bg-white'" class="px-4 py-2 rounded shadow">商品管理</button>
+            <button @click="currentTab = 'orders'" :class="currentTab === 'orders' ? 'bg-blue-600 text-white' : 'bg-white'" class="px-4 py-2 rounded shadow">訂單管理</button>
+        </div>
+
+        <!-- 商品管理區塊 -->
+        <div v-if="currentTab === 'products'">
+            <!-- 新增商品表單 -->
+            <div class="bg-white p-4 rounded shadow mb-6">
+                <h3 class="font-bold mb-3">新增商品</h3>
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <input v-model="newProduct.name" placeholder="商品名稱" class="border p-2 rounded">
+                    <input v-model.number="newProduct.price" type="number" placeholder="價格" class="border p-2 rounded">
+                    <select v-model="newProduct.category" class="border p-2 rounded">
+                        <option value="concert">演唱會</option>
+                        <option value="fanmeet">見面會</option>
+                        <option value="album">專輯</option>
+                    </select>
+                    <input v-model="newProduct.image" placeholder="圖片網址 (https://...)" class="border p-2 rounded">
+                </div>
+                <button @click="addProduct" class="bg-green-600 text-white px-4 py-2 rounded">新增上架</button>
+            </div>
+
+            <!-- 商品列表 -->
+            <div class="grid gap-4">
+                <div v-for="p in products" :key="p.id" class="bg-white p-4 rounded shadow flex justify-between items-center">
+                    <div class="flex items-center gap-4">
+                        <img :src="p.image" class="w-12 h-12 object-cover bg-gray-200 rounded">
+                        <div>
+                            <div class="font-bold">{{ p.name }}</div>
+                            <div class="text-sm text-gray-500">${{ p.price }} | {{ p.category }}</div>
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button @click="toggleStatus(p)" :class="p.status === 'on' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'" class="px-3 py-1 rounded text-sm font-bold">
+                            {{ p.status === 'on' ? '上架中' : '已下架' }}
+                        </button>
+                        <button @click="deleteProduct(p.id)" class="bg-red-100 text-red-600 px-3 py-1 rounded text-sm">刪除</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 訂單管理區塊 -->
+        <div v-if="currentTab === 'orders'">
+            <button @click="fetchOrders" class="mb-4 text-blue-600 underline">重新整理列表</button>
+            <div v-if="orders.length === 0" class="text-gray-500">目前沒有訂單</div>
+            <div v-for="order in orders" :key="order.id" class="bg-white p-4 rounded shadow mb-4 border-l-4 border-blue-500">
+                <div class="flex justify-between mb-2">
+                    <span class="font-bold text-lg">{{ order.customer.name }} ({{ order.customer.phone }})</span>
+                    <span class="text-gray-500 text-sm">{{ new Date(order.createdAt).toLocaleString() }}</span>
+                </div>
+                <div class="text-sm text-gray-600 mb-2">地址: {{ order.customer.address }}</div>
+                <div class="bg-gray-50 p-2 rounded mb-2">
+                    <div v-for="item in order.items" class="flex justify-between text-sm">
+                        <span>{{ item.name }}</span>
+                        <span>${{ item.price }}</span>
+                    </div>
+                    <div class="border-t mt-1 pt-1 flex justify-between font-bold">
+                        <span>總計</span>
+                        <span>${{ order.total }}</span>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-sm">狀態: {{ order.status }}</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    setTimeout(() => {
+        const { createApp } = Vue;
+        const { signInWithEmailAndPassword, onAuthStateChanged, signOut, collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, orderBy } = window.firebaseMethods;
+
+        createApp({
+            data() {
+                return {
+                    user: null,
+                    loginData: { email: '', password: '' },
+                    currentTab: 'products',
+                    products: [],
+                    orders: [],
+                    newProduct: { name: '', price: '', category: 'concert', image: 'https://placehold.co/400', status: 'on' }
+                }
+            },
+            methods: {
+                login() {
+                    signInWithEmailAndPassword(window.auth, this.loginData.email, this.loginData.password)
+                        .then(u => this.user = u.user)
+                        .catch(e => alert("登入失敗: " + e.message));
+                },
+                logout() {
+                    signOut(window.auth).then(() => this.user = null);
+                },
+                async fetchProducts() {
+                    const q = query(collection(window.db, "products"));
+                    const snap = await getDocs(q);
+                    this.products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                },
+                async addProduct() {
+                    if(!this.newProduct.name) return;
+                    await addDoc(collection(window.db, "products"), this.newProduct);
+                    this.newProduct.name = ''; // 清空
+                    this.fetchProducts(); // 重新讀取
+                },
+                async toggleStatus(p) {
+                    const newStatus = p.status === 'on' ? 'off' : 'on';
+                    await updateDoc(doc(window.db, "products", p.id), { status: newStatus });
+                    p.status = newStatus; // 本地更新UI
+                },
+                async deleteProduct(id) {
+                    if(confirm('確定刪除？')) {
+                        await deleteDoc(doc(window.db, "products", id));
+                        this.fetchProducts();
+                    }
+                },
+                async fetchOrders() {
+                    // 訂單通常想看最新的，所以 orderBy createdAt desc
+                    const q = query(collection(window.db, "orders"), orderBy("createdAt", "desc"));
+                    const snap = await getDocs(q);
+                    this.orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                }
+            },
+            mounted() {
+                // 監聽登入狀態
+                onAuthStateChanged(window.auth, (u) => {
+                    this.user = u;
+                    if (u) {
+                        this.fetchProducts();
+                        this.fetchOrders();
+                    }
+                });
+            }
+        }).mount('#adminApp');
+    }, 1000);
+</script>
+</body>
+</html>
